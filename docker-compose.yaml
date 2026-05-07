@@ -19,6 +19,8 @@ services:
     security_opt:
       - seccomp:unconfined
 
+    cpus: "${DOCKER_CPUS:-2.0}"
+    mem_limit: "${DOCKER_MEMORY:-4g}"
     shm_size: "2gb"
 
     healthcheck:

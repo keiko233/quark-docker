@@ -32,6 +32,7 @@ if [ "$QUARK_RUNTIME" = "spark" ] && [ -f "/opt/spark-bottle/drive_c/Program Fil
     EXE="/opt/spark-bottle/drive_c/Program Files (x86)/quark-cloud-drive/QuarkCloudDrive.exe"
     START_LNK="C:\\users\\Public\\Desktop\\夸克网盘.lnk"
     DATA_DIR="$WINEPREFIX/drive_c/users/wineuser/Application Data/quark-cloud-drive"
+    DOWNLOADS_DIR="$WINEPREFIX/drive_c/users/wineuser/Downloads"
 else
     EXE="$WINEPREFIX/drive_c/users/wineuser/AppData/Local/Programs/QuarkCloudDrive/quark_cloud_drive.exe"
     if [ ! -f "$EXE" ]; then
@@ -39,6 +40,7 @@ else
     fi
     START_LNK=""
     DATA_DIR="$WINEPREFIX/drive_c/users/wineuser/AppData/Local/QuarkCloudDrive"
+    DOWNLOADS_DIR="$WINEPREFIX/drive_c/users/wineuser/Downloads"
 fi
 if [ -z "${EXE:-}" ] || [ ! -f "$EXE" ]; then
     echo "ERROR: Quark executable not found"
@@ -46,12 +48,21 @@ if [ -z "${EXE:-}" ] || [ ! -f "$EXE" ]; then
 fi
 
 mkdir -p "$DATA_DIR"
+mkdir -p "$DOWNLOADS_DIR"
 if [ "$(id -u)" = "0" ]; then
     chown -R wineuser:wineuser "$DATA_DIR"
     chmod -R u+rwX "$DATA_DIR"
     if ! su -s /bin/bash wineuser -c "test -w '$DATA_DIR'"; then
         echo "ERROR: Quark data directory is not writable by wineuser: $DATA_DIR"
         ls -ld "$DATA_DIR"
+        tail -f /dev/null
+    fi
+
+    chown -R wineuser:wineuser "$DOWNLOADS_DIR"
+    chmod -R u+rwX "$DOWNLOADS_DIR"
+    if ! su -s /bin/bash wineuser -c "test -w '$DOWNLOADS_DIR'"; then
+        echo "ERROR: Quark downloads directory is not writable by wineuser: $DOWNLOADS_DIR"
+        ls -ld "$DOWNLOADS_DIR"
         tail -f /dev/null
     fi
 fi

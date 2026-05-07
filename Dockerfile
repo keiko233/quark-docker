@@ -109,4 +109,4 @@ USER root
 
 EXPOSE 9223
 
-CMD ["/usr/local/bin/run-quark.sh"]
+ENTRYPOINT ["/usr/local/bin/run-quark.sh"]
