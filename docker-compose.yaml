@@ -1,0 +1,31 @@
+services:
+  quark-docker:
+    build: .
+    image: quark-docker:latest
+    container_name: quark-docker
+    hostname: quark-docker
+    platform: linux/amd64
+
+    ports:
+      - "5900:5900"
+      - "${REMOTE_DEBUGGING_PORT:-9222}:9223"
+
+    volumes:
+      # Spark/AUR runtime data. This is the default runtime because the current
+      # 6.6.7 installer crashes before creating a visible Electron window.
+      - ./wine-data-spark:/opt/spark-bottle/drive_c/users/wineuser/Application Data/quark-cloud-drive
+      - ./downloads:/opt/spark-bottle/drive_c/users/wineuser/Downloads
+
+    security_opt:
+      - seccomp:unconfined
+
+    shm_size: "2gb"
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9222/json/version >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    restart: unless-stopped

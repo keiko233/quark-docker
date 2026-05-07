@@ -1,0 +1,20 @@
+REGEDIT4
+
+; Register WenQuanYi font files
+[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\Fonts]
+"WenQuanYi Micro Hei (TrueType)"="wqy-microhei.ttc"
+"WenQuanYi ZenHei (TrueType)"="wqy-zenhei.ttc"
+
+; Map common CJK font names to WenQuanYi to prevent missing-glyph squares
+[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\FontSubstitutes]
+"SimSun"="WenQuanYi Micro Hei"
+"SimSun,0"="WenQuanYi Micro Hei,134"
+"SimHei"="WenQuanYi Micro Hei"
+"SimHei,0"="WenQuanYi Micro Hei,134"
+"Microsoft YaHei"="WenQuanYi Micro Hei"
+"Microsoft YaHei,0"="WenQuanYi Micro Hei,134"
+"Microsoft YaHei UI"="WenQuanYi Micro Hei"
+"Microsoft YaHei UI,0"="WenQuanYi Micro Hei,134"
+"MS Shell Dlg"="WenQuanYi Micro Hei"
+"MS Shell Dlg 2"="WenQuanYi Micro Hei"
+"Tahoma"="WenQuanYi Micro Hei"

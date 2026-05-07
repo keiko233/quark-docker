@@ -1,0 +1,15 @@
+.git
+.github
+.prepared
+downloads
+wine-data
+node_modules
+
+# Keep the installer for the install-debug target and the prepared prefix for
+# the final runtime image.
+!installer.exe
+!cjk-fonts.reg
+!wineprefix.tar.zst
+!scripts/
+!scripts/run-quark.sh
+!scripts/prepare-wineprefix.sh
