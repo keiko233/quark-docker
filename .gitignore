@@ -1,4 +1,5 @@
 installer.exe
+!installer.exe
 wine-data
 wine-data-spark
 wine-data.bak-*
