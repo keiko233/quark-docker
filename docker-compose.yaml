@@ -6,6 +6,13 @@ services:
     hostname: quark-docker
     platform: linux/amd64
 
+    devices:
+      - /dev/dri:/dev/dri  # Intel/AMD GPU
+
+    environment:
+      # Set before startup, e.g. MESA_LOADER_DRIVER_OVERRIDE=iris or radeonsi.
+      MESA_LOADER_DRIVER_OVERRIDE: "${MESA_LOADER_DRIVER_OVERRIDE:-}"
+
     ports:
       - "5900:5900"
       - "${REMOTE_DEBUGGING_PORT:-9222}:9223"

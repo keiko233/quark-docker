@@ -24,6 +24,7 @@ ENV RDP_SERVER=no \
 # Suppress Mono/Gecko only during wineboot in the prepare script.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+        cpulimit \
         fonts-wqy-microhei \
         fonts-wqy-zenhei \
         fonts-noto-cjk \
@@ -34,6 +35,11 @@ RUN apt-get update && \
         p7zip-full \
         curl \
         ca-certificates \
+        libdrm2 \
+        mesa-utils \
+        libva2 \
+        libva-drm2 \
+        libgl1-mesa-dri \
         libasound2-plugins \
         libcapi20-3 \
         libgstreamer1.0-0 \

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -u
 
+export LIBGL_ALWAYS_SOFTWARE=1
+export GALLIUM_DRIVER=llvmpipe
+export MESA_GL_VERSION_OVERRIDE=4.5
+
 export DISPLAY="${DISPLAY:-:0}"
 export WINEPREFIX="${WINEPREFIX:-/opt/wineprefix}"
 export WINE_BIN="${WINE_BIN:-/opt/deepin-wine8-stable/bin/wine}"
@@ -23,7 +27,7 @@ if [ "$(id -u)" = "0" ]; then
     chown wineuser:wineuser /tmp/runtime-wineuser/asoundrc
 fi
 
-Xvfb :0 -screen 0 1024x768x16 -ac &
+Xvfb :0 -screen 0 1024x768x16 -ac -noreset +extension GLX -dpi 96 &
 sleep 2
 x11vnc -display :0 -forever -nopw -rfbport 5900 -cursor most -quiet &
 
@@ -69,12 +73,28 @@ fi
 
 echo "Starting Quark executable: $EXE"
 
+QUARK_EXTRA_ARGS="
+    --disable-gpu
+    --disable-software-rasterizer
+    --disable-gpu-compositing
+    --max-gum-decode-ms=9999
+"
+
 if command -v python3 >/dev/null 2>&1; then
     python3 /usr/local/bin/cdp-proxy.py 9223 9222 &
 else
     echo "ERROR: python3 is required for CDP proxy"
     tail -f /dev/null
 fi
+
+cpu_limit_cmd='
+    if command -v cpulimit >/dev/null 2>&1; then
+        cpulimit -e wineserver -l 20 >/tmp/cpulimit-wineserver.log 2>&1 &
+        cpulimit -e wine -l 30 >/tmp/cpulimit-wine.log 2>&1 &
+    else
+        echo "WARNING: cpulimit is not installed; skipping CPU throttling" >&2
+    fi
+'
 
 wine_cmd="
     export DISPLAY='$DISPLAY'
@@ -84,6 +104,8 @@ wine_cmd="
     export ALSA_CONFIG_PATH='/tmp/runtime-wineuser/asoundrc'
     export WINE_BIN='$WINE_BIN'
     export WINESERVER_BIN='$WINESERVER_BIN'
+    export QUARK_EXTRA_ARGS='$QUARK_EXTRA_ARGS'
+    $cpu_limit_cmd
     \"\$WINESERVER_BIN\" -k >/dev/null 2>&1 || true
     cd '$(dirname "$EXE")'
     if [ -n '$START_LNK' ]; then
@@ -91,7 +113,8 @@ wine_cmd="
             --no-sandbox \
             --remote-debugging-port='9222' \
             --remote-debugging-address=0.0.0.0 \
-            --remote-allow-origins='*'
+            --remote-allow-origins='*' \
+            \$QUARK_EXTRA_ARGS
         tail -f /dev/null
     else
         DATA_DIR=\"\$WINEPREFIX/drive_c/users/wineuser/AppData/Local/QuarkCloudDrive/User Data\"
@@ -101,7 +124,8 @@ wine_cmd="
             --brand-clouddrive \
             --remote-debugging-port='9222' \
             --remote-debugging-address=0.0.0.0 \
-            --remote-allow-origins='*'
+            --remote-allow-origins='*' \
+            \$QUARK_EXTRA_ARGS
     fi
 "
 
