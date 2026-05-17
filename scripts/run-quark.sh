@@ -185,6 +185,19 @@ else
     tail -f /dev/null
 fi
 
+# Build Mesa env-var lines for wine_cmd conditionally: exporting an empty
+# string is rejected by Mesa validators, so unset the variable instead.
+if [ -n "${MESA_GL_VERSION_OVERRIDE:-}" ]; then
+    _mesa_gl_line="export MESA_GL_VERSION_OVERRIDE='$MESA_GL_VERSION_OVERRIDE'"
+else
+    _mesa_gl_line="unset MESA_GL_VERSION_OVERRIDE 2>/dev/null; true"
+fi
+if [ -n "${MESA_LOADER_DRIVER_OVERRIDE:-}" ]; then
+    _mesa_loader_line="export MESA_LOADER_DRIVER_OVERRIDE='$MESA_LOADER_DRIVER_OVERRIDE'"
+else
+    _mesa_loader_line="unset MESA_LOADER_DRIVER_OVERRIDE 2>/dev/null; true"
+fi
+
 wine_cmd="
     export DISPLAY='$DISPLAY'
     export LIBVA_DRIVER_NAME='${LIBVA_DRIVER_NAME:-}'
@@ -197,8 +210,8 @@ wine_cmd="
     export QUARK_EXTRA_ARGS='$QUARK_EXTRA_ARGS'
     export WINEFSYNC='$WINEFSYNC'
     export WINESYNC='$WINESYNC'
-    export MESA_GL_VERSION_OVERRIDE='${MESA_GL_VERSION_OVERRIDE:-}'
-    export MESA_LOADER_DRIVER_OVERRIDE='${MESA_LOADER_DRIVER_OVERRIDE:-}'
+    $_mesa_gl_line
+    $_mesa_loader_line
     \"\$WINESERVER_BIN\" -k >/dev/null 2>&1 || true
     cd '$(dirname "$EXE")'
     if [ -n '$START_LNK' ]; then
