@@ -41,6 +41,7 @@ RUN apt-get update && \
         libgl1-mesa-dri \
         intel-media-va-driver \
         i965-va-driver \
+        xserver-xorg-core \
         libasound2-plugins \
         libcapi20-3 \
         libgstreamer1.0-0 \

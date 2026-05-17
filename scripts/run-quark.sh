@@ -3,12 +3,8 @@ set -u
 
 # Use the host GPU (DRI) for Wine's own GL calls instead of the llvmpipe
 # software renderer.  llvmpipe is pure-CPU and causes both high CPU usage and
-# inflated memory (CrGpuMain 1 GB).  The host's /dev/dri is passed through via
-# docker-compose so Mesa/DRI hardware rendering is available.
-#
-# IMPORTANT: Chromium's GPU process still gets --in-process-gpu below so it
-# runs inside the browser process rather than as a separate CrGpuMain, saving
-# another 1 GB of RAM even without hardware GL compositing.
+# inflated memory.  The host's /dev/dri is passed through via docker-compose
+# so Mesa/DRI hardware rendering is available when Xorg is used.
 export MESA_GL_VERSION_OVERRIDE=4.5
 # WINEFSYNC uses futex-based synchronisation (kernel ≥ 5.16, esync compatible).
 # This replaces the busy-polling done by wineserver and dramatically lowers
@@ -61,11 +57,44 @@ else
     echo "VAAPI driver  : (not detected)"
 fi
 
-# Xorg + modesetting + DRI3 in Docker causes Wine/Chromium GPU init to hang
-# (white screen).  Xvfb is used instead; VAAPI video decode still reaches the
-# Intel GPU directly via /dev/dri/renderD128 and shows up in intel_gpu_top.
-echo "--- Starting Xvfb ---"
-Xvfb :0 -screen 0 1024x768x16 -ac -noreset +extension GLX -dpi 96 &
+# Try hardware-accelerated Xorg (modesetting + DRI3) so Wine's wined3d can
+# use the Intel GPU via Mesa/iris.  Fall back to Xvfb if DRI card is absent
+# or Xorg fails to start.
+#
+# Key fixes vs. the previous (white-screen) attempt:
+#   - MESA_GL_VERSION_OVERRIDE is unset for real hardware (it was a llvmpipe
+#     hack; overriding on real hardware causes extension-set mismatches).
+#   - --in-process-gpu is NOT passed so the GPU process is separate; if GPU
+#     init fails it crashes independently and the renderer falls back to
+#     software instead of hanging the whole browser (white screen).
+_use_hw_xorg=0
+if [ -e /dev/dri/card0 ] || [ -e /dev/dri/card1 ]; then
+    echo "--- Starting Xorg (modesetting/DRI3) ---"
+    Xorg :0 -noreset -nolisten tcp -config /etc/X11/xorg-headless.conf \
+         -logfile /tmp/Xorg.0.log &
+    _xorg_pid=$!
+    _waited=0
+    while [ $_waited -lt 8 ] && ! [ -S /tmp/.X11-unix/X0 ]; do
+        sleep 1
+        _waited=$((_waited + 1))
+    done
+    if [ -S /tmp/.X11-unix/X0 ]; then
+        echo "Xorg started with hardware DRI3 (pid $_xorg_pid)."
+        _use_hw_xorg=1
+        # Real hardware reports its own GL version — override is not needed.
+        unset MESA_GL_VERSION_OVERRIDE
+        export MESA_LOADER_DRIVER_OVERRIDE="${MESA_LOADER_DRIVER_OVERRIDE:-iris}"
+        echo "  MESA_LOADER_DRIVER_OVERRIDE: $MESA_LOADER_DRIVER_OVERRIDE"
+    else
+        echo "Xorg failed to start (see /tmp/Xorg.0.log); falling back to Xvfb."
+        kill "$_xorg_pid" 2>/dev/null || true
+    fi
+fi
+
+if [ "$_use_hw_xorg" = "0" ]; then
+    echo "--- Starting Xvfb (software fallback) ---"
+    Xvfb :0 -screen 0 1024x768x16 -ac -noreset +extension GLX -dpi 96 &
+fi
 sleep 2
 echo "--- Starting x11vnc on :5900 ---"
 x11vnc -display :0 -forever -nopw -rfbport 5900 -cursor most -quiet &
@@ -117,7 +146,7 @@ if [ "$(id -u)" = "0" ]; then
 fi
 
 echo "--- Launching Wine ---"
-echo "  MESA_GL_VERSION_OVERRIDE : $MESA_GL_VERSION_OVERRIDE"
+echo "  MESA_GL_VERSION_OVERRIDE : ${MESA_GL_VERSION_OVERRIDE:-}"
 echo "  WINEFSYNC / WINESYNC     : $WINEFSYNC / $WINESYNC"
 echo "Starting Quark: $EXE"
 
@@ -134,9 +163,11 @@ else
     --disable-gpu-compositing"
 fi
 
+# --in-process-gpu is intentionally omitted: it merges the GPU process into
+# the browser process, so a GPU init hang blocks rendering (white screen).
+# With a separate GPU process, failures trigger a graceful software fallback.
 QUARK_EXTRA_ARGS="
     $_gpu_flags
-    --in-process-gpu
     --disable-dev-shm-usage
     --renderer-process-limit=1
     --disable-background-networking
@@ -166,7 +197,8 @@ wine_cmd="
     export QUARK_EXTRA_ARGS='$QUARK_EXTRA_ARGS'
     export WINEFSYNC='$WINEFSYNC'
     export WINESYNC='$WINESYNC'
-    export MESA_GL_VERSION_OVERRIDE='$MESA_GL_VERSION_OVERRIDE'
+    export MESA_GL_VERSION_OVERRIDE='${MESA_GL_VERSION_OVERRIDE:-}'
+    export MESA_LOADER_DRIVER_OVERRIDE='${MESA_LOADER_DRIVER_OVERRIDE:-}'
     \"\$WINESERVER_BIN\" -k >/dev/null 2>&1 || true
     cd '$(dirname "$EXE")'
     if [ -n '$START_LNK' ]; then
