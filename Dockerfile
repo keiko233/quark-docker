@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM scottyhardy/docker-wine:latest AS base
 
 # Common runtime for both the manual installer environment and the final image.
@@ -26,7 +27,6 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         fonts-wqy-microhei \
         fonts-wqy-zenhei \
-        fonts-noto-cjk \
         locales \
         x11vnc \
         xdotool \
@@ -35,7 +35,6 @@ RUN apt-get update && \
         curl \
         ca-certificates \
         libdrm2 \
-        mesa-utils \
         libva2 \
         libva-drm2 \
         libgl1-mesa-dri \
@@ -43,13 +42,8 @@ RUN apt-get update && \
         libcapi20-3 \
         libgstreamer1.0-0 \
         libgstreamer-plugins-base1.0-0 \
-        libosmesa6 \
-        libpcsclite1 \
         libpulse0 \
-        libsane1 \
         libsdl2-2.0-0 \
-        libusb-1.0-0 \
-        libv4l-0 \
         libwayland-client0 \
         libxcomposite1 \
         libxcursor1 \
@@ -59,7 +53,6 @@ RUN apt-get update && \
         libxrandr2 \
         libxrender1 \
         libxxf86vm1 \
-        ocl-icd-libopencl1 \
     && locale-gen zh_CN.UTF-8 \
     && curl -fL "$DEEPIN_WINE8_URL" -o /tmp/deepin-wine8.deb \
     && dpkg-deb -x /tmp/deepin-wine8.deb / \
@@ -86,9 +79,8 @@ CMD rm -f /tmp/.X0-lock /tmp/.X11-unix/X0 && \
 
 FROM base
 
-COPY ./wineprefix.tar.zst /tmp/wineprefix.tar.zst
-
-RUN rm -rf /opt/wineprefix && \
+RUN --mount=type=bind,source=wineprefix.tar.zst,target=/tmp/wineprefix.tar.zst \
+    rm -rf /opt/wineprefix && \
     mkdir -p /opt/wineprefix && \
     tar --zstd -xf /tmp/wineprefix.tar.zst -C /opt/wineprefix && \
     curl -fL "$SPARK_QUARK_URL" -o /tmp/quark-spark.deb && \
@@ -103,7 +95,7 @@ RUN rm -rf /opt/wineprefix && \
     ln -sfn / /opt/spark-bottle/dosdevices/z: && \
     chown -R wineuser:wineuser /opt/wineprefix && \
     chown -R wineuser:wineuser /opt/spark-bottle && \
-    rm -rf /tmp/wineprefix.tar.zst /tmp/quark-spark.deb /tmp/quark-spark
+    rm -rf /tmp/quark-spark.deb /tmp/quark-spark
 
 COPY ./scripts/run-quark.sh /usr/local/bin/run-quark.sh
 COPY ./scripts/cdp-proxy.py /usr/local/bin/cdp-proxy.py
