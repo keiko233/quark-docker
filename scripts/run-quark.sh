@@ -22,6 +22,13 @@ export WINE_BIN="${WINE_BIN:-/opt/deepin-wine8-stable/bin/wine}"
 export WINESERVER_BIN="${WINESERVER_BIN:-/opt/deepin-wine8-stable/bin/wineserver}"
 export QUARK_RUNTIME="${QUARK_RUNTIME:-spark}"
 
+echo "=== quark-docker startup ==="
+echo "  QUARK_RUNTIME : $QUARK_RUNTIME"
+echo "  WINEPREFIX    : $WINEPREFIX"
+echo "  WINE_BIN      : $WINE_BIN"
+echo "  DISPLAY       : $DISPLAY"
+echo "  Running as UID: $(id -u)"
+
 rm -f /tmp/.X0-lock /tmp/.X11-unix/X0
 mkdir -p /tmp/.X11-unix /tmp/runtime-wineuser
 chmod 1777 /tmp/.X11-unix 2>/dev/null || true
@@ -38,16 +45,39 @@ if [ "$(id -u)" = "0" ]; then
     chown wineuser:wineuser /tmp/runtime-wineuser/asoundrc
 fi
 
+# Auto-detect VAAPI driver for Intel GPU hardware video acceleration.
+echo "--- DRI devices ---"
+ls /dev/dri/ 2>/dev/null || echo "  (none)"
+if [ -z "${LIBVA_DRIVER_NAME:-}" ]; then
+    if [ -f /usr/lib/x86_64-linux-gnu/dri/iHD_drv_video.so ]; then
+        export LIBVA_DRIVER_NAME=iHD    # Gen8+ (Broadwell and newer)
+    elif [ -f /usr/lib/x86_64-linux-gnu/dri/i965_drv_video.so ]; then
+        export LIBVA_DRIVER_NAME=i965   # Gen4–7 (Sandy/Ivy Bridge)
+    fi
+fi
+if [ -n "${LIBVA_DRIVER_NAME:-}" ]; then
+    echo "VAAPI driver  : $LIBVA_DRIVER_NAME"
+else
+    echo "VAAPI driver  : (not detected)"
+fi
+
+# Xorg + modesetting + DRI3 in Docker causes Wine/Chromium GPU init to hang
+# (white screen).  Xvfb is used instead; VAAPI video decode still reaches the
+# Intel GPU directly via /dev/dri/renderD128 and shows up in intel_gpu_top.
+echo "--- Starting Xvfb ---"
 Xvfb :0 -screen 0 1024x768x16 -ac -noreset +extension GLX -dpi 96 &
 sleep 2
+echo "--- Starting x11vnc on :5900 ---"
 x11vnc -display :0 -forever -nopw -rfbport 5900 -cursor most -quiet &
 
+echo "--- Resolving Quark runtime ---"
 if [ "$QUARK_RUNTIME" = "spark" ] && [ -f "/opt/spark-bottle/drive_c/Program Files (x86)/quark-cloud-drive/QuarkCloudDrive.exe" ]; then
     export WINEPREFIX="/opt/spark-bottle"
     EXE="/opt/spark-bottle/drive_c/Program Files (x86)/quark-cloud-drive/QuarkCloudDrive.exe"
     START_LNK="C:\\users\\Public\\Desktop\\夸克网盘.lnk"
     DATA_DIR="$WINEPREFIX/drive_c/users/wineuser/Application Data/quark-cloud-drive"
     DOWNLOADS_DIR="$WINEPREFIX/drive_c/users/wineuser/Downloads"
+    echo "  Runtime       : spark bottle"
 else
     EXE="$WINEPREFIX/drive_c/users/wineuser/AppData/Local/Programs/QuarkCloudDrive/quark_cloud_drive.exe"
     if [ ! -f "$EXE" ]; then
@@ -56,11 +86,15 @@ else
     START_LNK=""
     DATA_DIR="$WINEPREFIX/drive_c/users/wineuser/AppData/Local/QuarkCloudDrive"
     DOWNLOADS_DIR="$WINEPREFIX/drive_c/users/wineuser/Downloads"
+    echo "  Runtime       : standard wineprefix"
 fi
 if [ -z "${EXE:-}" ] || [ ! -f "$EXE" ]; then
     echo "ERROR: Quark executable not found"
     tail -f /dev/null
 fi
+echo "  EXE           : $EXE"
+echo "  DATA_DIR      : $DATA_DIR"
+echo "  DOWNLOADS_DIR : $DOWNLOADS_DIR"
 
 mkdir -p "$DATA_DIR"
 mkdir -p "$DOWNLOADS_DIR"
@@ -82,7 +116,10 @@ if [ "$(id -u)" = "0" ]; then
     fi
 fi
 
-echo "Starting Quark executable: $EXE"
+echo "--- Launching Wine ---"
+echo "  MESA_GL_VERSION_OVERRIDE : $MESA_GL_VERSION_OVERRIDE"
+echo "  WINEFSYNC / WINESYNC     : $WINEFSYNC / $WINESYNC"
+echo "Starting Quark: $EXE"
 
 # Auto-detect GPU: if a DRI render node is accessible (passed through via
 # docker-compose devices), let Chromium use hardware acceleration through
@@ -109,6 +146,7 @@ QUARK_EXTRA_ARGS="
     --js-flags=--max-old-space-size=256
 "
 
+echo "--- Starting CDP proxy (9223 → 9222) ---"
 if command -v python3 >/dev/null 2>&1; then
     python3 /usr/local/bin/cdp-proxy.py 9223 9222 &
 else
@@ -118,6 +156,7 @@ fi
 
 wine_cmd="
     export DISPLAY='$DISPLAY'
+    export LIBVA_DRIVER_NAME='${LIBVA_DRIVER_NAME:-}'
     export WINEPREFIX='$WINEPREFIX'
     export WINEDEBUG='${WINEDEBUG:--all}'
     export XDG_RUNTIME_DIR='/tmp/runtime-wineuser'
@@ -157,5 +196,6 @@ else
     bash -lc "$wine_cmd"
 fi
 status=$?
-echo "Quark exited with status $status; keeping VNC alive for inspection."
+echo "=== Quark exited with status $status ==="
+echo "Keeping VNC alive for inspection (connect to :5900)."
 tail -f /dev/null

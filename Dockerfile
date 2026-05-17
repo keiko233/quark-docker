@@ -37,7 +37,10 @@ RUN apt-get update && \
         libdrm2 \
         libva2 \
         libva-drm2 \
+        libva-x11-2 \
         libgl1-mesa-dri \
+        intel-media-va-driver \
+        i965-va-driver \
         libasound2-plugins \
         libcapi20-3 \
         libgstreamer1.0-0 \
@@ -62,7 +65,39 @@ RUN apt-get update && \
     && (id -u wineuser >/dev/null 2>&1 || useradd -u 1000 -g 1000 -m -s /bin/bash wineuser) \
     && mkdir -p /opt/wineprefix /tmp/.X11-unix \
     && chown wineuser:wineuser /opt/wineprefix \
-    && chmod 1777 /tmp/.X11-unix
+    && chmod 1777 /tmp/.X11-unix \
+    && mkdir -p /etc/X11 \
+    && cat > /etc/X11/xorg-headless.conf <<'XORGEOF'
+Section "ServerFlags"
+    Option "AutoAddDevices"  "false"
+    Option "AutoEnableDevices" "false"
+    Option "AllowEmptyInput" "true"
+    Option "DontVTSwitch"    "true"
+EndSection
+
+Section "Device"
+    Identifier "GPU"
+    Driver     "modesetting"
+    Option     "DRI" "3"
+EndSection
+
+Section "Monitor"
+    Identifier "Monitor0"
+    HorizSync   28-80
+    VertRefresh 48-75
+EndSection
+
+Section "Screen"
+    Identifier "Screen0"
+    Device     "GPU"
+    Monitor    "Monitor0"
+    DefaultDepth 24
+    SubSection "Display"
+        Depth  24
+        Modes  "1280x720"
+    EndSubSection
+EndSection
+XORGEOF
 
 FROM base AS install-debug
 
