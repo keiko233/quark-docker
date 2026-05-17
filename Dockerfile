@@ -24,7 +24,6 @@ ENV RDP_SERVER=no \
 # Suppress Mono/Gecko only during wineboot in the prepare script.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        cpulimit \
         fonts-wqy-microhei \
         fonts-wqy-zenhei \
         fonts-noto-cjk \

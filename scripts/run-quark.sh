@@ -1,9 +1,20 @@
 #!/usr/bin/env bash
 set -u
 
-export LIBGL_ALWAYS_SOFTWARE=1
-export GALLIUM_DRIVER=llvmpipe
+# Use the host GPU (DRI) for Wine's own GL calls instead of the llvmpipe
+# software renderer.  llvmpipe is pure-CPU and causes both high CPU usage and
+# inflated memory (CrGpuMain 1 GB).  The host's /dev/dri is passed through via
+# docker-compose so Mesa/DRI hardware rendering is available.
+#
+# IMPORTANT: Chromium's GPU process still gets --in-process-gpu below so it
+# runs inside the browser process rather than as a separate CrGpuMain, saving
+# another 1 GB of RAM even without hardware GL compositing.
 export MESA_GL_VERSION_OVERRIDE=4.5
+# WINEFSYNC uses futex-based synchronisation (kernel ≥ 5.16, esync compatible).
+# This replaces the busy-polling done by wineserver and dramatically lowers
+# idle CPU.  Kernel 6.12 fully supports it.
+export WINEFSYNC=1
+export WINESYNC=1
 
 export DISPLAY="${DISPLAY:-:0}"
 export WINEPREFIX="${WINEPREFIX:-/opt/wineprefix}"
@@ -73,11 +84,29 @@ fi
 
 echo "Starting Quark executable: $EXE"
 
+# Auto-detect GPU: if a DRI render node is accessible (passed through via
+# docker-compose devices), let Chromium use hardware acceleration through
+# Wine's wined3d → Mesa/DRI stack and omit --disable-gpu.
+# Without a GPU, fall back to software rendering.
+if [ -e /dev/dri/renderD128 ] || [ -e /dev/dri/card0 ]; then
+    echo "GPU detected via DRI; enabling hardware acceleration for Chromium."
+    _gpu_flags=""
+else
+    echo "No DRI device found; disabling Chromium GPU acceleration."
+    _gpu_flags="--disable-gpu
+    --disable-gpu-compositing"
+fi
+
 QUARK_EXTRA_ARGS="
-    --disable-gpu
-    --disable-software-rasterizer
-    --disable-gpu-compositing
-    --max-gum-decode-ms=9999
+    $_gpu_flags
+    --in-process-gpu
+    --disable-dev-shm-usage
+    --renderer-process-limit=1
+    --disable-background-networking
+    --disable-background-timer-throttling=0
+    --disable-backgrounding-occluded-windows
+    --disable-renderer-backgrounding
+    --js-flags=--max-old-space-size=256
 "
 
 if command -v python3 >/dev/null 2>&1; then
@@ -86,15 +115,6 @@ else
     echo "ERROR: python3 is required for CDP proxy"
     tail -f /dev/null
 fi
-
-cpu_limit_cmd='
-    if command -v cpulimit >/dev/null 2>&1; then
-        cpulimit -e wineserver -l 20 >/tmp/cpulimit-wineserver.log 2>&1 &
-        cpulimit -e wine -l 30 >/tmp/cpulimit-wine.log 2>&1 &
-    else
-        echo "WARNING: cpulimit is not installed; skipping CPU throttling" >&2
-    fi
-'
 
 wine_cmd="
     export DISPLAY='$DISPLAY'
@@ -105,7 +125,9 @@ wine_cmd="
     export WINE_BIN='$WINE_BIN'
     export WINESERVER_BIN='$WINESERVER_BIN'
     export QUARK_EXTRA_ARGS='$QUARK_EXTRA_ARGS'
-    $cpu_limit_cmd
+    export WINEFSYNC='$WINEFSYNC'
+    export WINESYNC='$WINESYNC'
+    export MESA_GL_VERSION_OVERRIDE='$MESA_GL_VERSION_OVERRIDE'
     \"\$WINESERVER_BIN\" -k >/dev/null 2>&1 || true
     cd '$(dirname "$EXE")'
     if [ -n '$START_LNK' ]; then
