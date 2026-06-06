@@ -301,9 +301,13 @@ def make_handler(quark_port: int, proxy_port: int, on_activity=None):
 
 
 async def run_server(proxy_port: int, quark_port: int, on_activity=None):
-    """Start the CDP proxy server. Returns the asyncio.Server for later teardown."""
-    loop = asyncio.get_event_loop()
-    server = await loop.create_server(
+    """Start the CDP proxy server. Returns the asyncio.Server for later teardown.
+
+    Uses asyncio.start_server (streams API) because make_handler() returns a
+    `(reader, writer) -> coroutine` callable — loop.create_server() would treat
+    that as a Protocol factory and silently RST every connection on the first
+    .connection_made() call (the lambda has no such method)."""
+    server = await asyncio.start_server(
         make_handler(quark_port, proxy_port, on_activity),
         "0.0.0.0",
         proxy_port,
