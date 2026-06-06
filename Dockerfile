@@ -57,6 +57,8 @@ RUN apt-get update && \
         libxrandr2 \
         libxrender1 \
         libxxf86vm1 \
+        python3 \
+        python3-pip \
     && locale-gen zh_CN.UTF-8 \
     && curl -fL "$DEEPIN_WINE8_URL" -o /tmp/deepin-wine8.deb \
     && dpkg-deb -x /tmp/deepin-wine8.deb / \
@@ -134,12 +136,23 @@ RUN --mount=type=bind,source=wineprefix.tar.zst,target=/tmp/wineprefix.tar.zst \
     rm -rf /tmp/quark-spark.deb /tmp/quark-spark
 
 COPY ./scripts/run-quark.sh /usr/local/bin/run-quark.sh
-COPY ./scripts/cdp-proxy.py /usr/local/bin/cdp-proxy.py
+COPY ./scripts/launch-quark.sh /usr/local/bin/launch-quark.sh
+COPY ./scripts/cdp_proxy.py /usr/local/bin/cdp_proxy.py
+COPY ./scripts/manager.py /usr/local/bin/manager.py
 
-RUN chmod +x /usr/local/bin/run-quark.sh
+# Manager dependencies. --break-system-packages is required because Debian's
+# python3 is an externally-managed (PEP 668) install.
+RUN pip3 install --break-system-packages --no-cache-dir \
+        fastapi \
+        uvicorn \
+        psutil \
+    && chmod +x /usr/local/bin/run-quark.sh \
+                /usr/local/bin/launch-quark.sh \
+                /usr/local/bin/cdp_proxy.py \
+                /usr/local/bin/manager.py
 
 USER root
 
-EXPOSE 9223
+EXPOSE 8080 9223
 
 ENTRYPOINT ["/usr/local/bin/run-quark.sh"]

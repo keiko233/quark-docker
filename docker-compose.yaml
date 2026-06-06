@@ -13,9 +13,28 @@ services:
       # Set before startup, e.g. MESA_LOADER_DRIVER_OVERRIDE=iris or radeonsi.
       MESA_LOADER_DRIVER_OVERRIDE: "${MESA_LOADER_DRIVER_OVERRIDE:-}"
 
+      # ── Manager (REST API + idle policy) ───────────────────────────────
+      # API listen port (FastAPI). /openapi.json and /spec.json are exposed.
+      QUARK_API_PORT: "${QUARK_API_PORT:-8080}"
+      # Container startup: cold-start Quark automatically when manager boots.
+      QUARK_AUTOSTART: "${QUARK_AUTOSTART:-true}"
+      # Two-stage idle policy: minimize window first, then stop the process.
+      # 0 disables that stage.
+      QUARK_IDLE_MINIMIZE_TIMEOUT: "${QUARK_IDLE_MINIMIZE_TIMEOUT:-300}"
+      QUARK_IDLE_STOP_TIMEOUT: "${QUARK_IDLE_STOP_TIMEOUT:-1800}"
+      # Monitor sampling cadence.
+      QUARK_IDLE_CHECK_INTERVAL: "${QUARK_IDLE_CHECK_INTERVAL:-10}"
+      # Process-tree CPU% above this counts as "busy" and resets the idle
+      # clock even with zero CDP traffic (e.g. background uploads).
+      QUARK_CPU_BUSY_THRESHOLD: "${QUARK_CPU_BUSY_THRESHOLD:-15.0}"
+      # When the window is minimized and a CDP client connects, restore it
+      # automatically so backgrounded Chromium doesn't throttle automation.
+      QUARK_RESTORE_ON_CDP: "${QUARK_RESTORE_ON_CDP:-true}"
+
     ports:
       - "5900:5900"
       - "${REMOTE_DEBUGGING_PORT:-9222}:9223"
+      - "${QUARK_API_PORT:-8080}:8080"
 
     volumes:
       # Spark/AUR runtime data. This is the default runtime because the current
@@ -31,7 +50,9 @@ services:
     shm_size: "2gb"
 
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9222/json/version >/dev/null || exit 1"]
+      # Probe the manager, not the CDP port: when Quark is idle-stopped the
+      # CDP port is intentionally down, but the manager itself is still up.
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8080/healthz >/dev/null || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

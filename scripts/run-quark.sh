@@ -166,81 +166,35 @@ fi
 # --in-process-gpu is intentionally omitted: it merges the GPU process into
 # the browser process, so a GPU init hang blocks rendering (white screen).
 # With a separate GPU process, failures trigger a graceful software fallback.
+# The three background-throttling flags (--disable-background-timer-throttling,
+# --disable-backgrounding-occluded-windows, --disable-renderer-backgrounding)
+# are intentionally NOT set: when the manager minimizes the Quark window we
+# want Chromium to actually throttle background tabs to free up CPU.
 QUARK_EXTRA_ARGS="
     $_gpu_flags
     --disable-dev-shm-usage
     --renderer-process-limit=1
     --disable-background-networking
-    --disable-background-timer-throttling=0
-    --disable-backgrounding-occluded-windows
-    --disable-renderer-backgrounding
     --js-flags=--max-old-space-size=256
 "
 
-echo "--- Starting CDP proxy (9223 → 9222) ---"
-if command -v python3 >/dev/null 2>&1; then
-    python3 /usr/local/bin/cdp-proxy.py 9223 9222 &
-else
-    echo "ERROR: python3 is required for CDP proxy"
+echo "--- Launching manager (API on :${QUARK_API_PORT:-8080}) ---"
+# The manager owns: FastAPI, the in-process CDP proxy (9223 → 9222), and the
+# idle monitor. It will exec launch-quark.sh to start the actual Quark
+# process group; that one lives in its own session so we can kill it cleanly.
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "ERROR: python3 is required for the manager"
     tail -f /dev/null
 fi
-
-# Build Mesa env-var lines for wine_cmd conditionally: exporting an empty
-# string is rejected by Mesa validators, so unset the variable instead.
-if [ -n "${MESA_GL_VERSION_OVERRIDE:-}" ]; then
-    _mesa_gl_line="export MESA_GL_VERSION_OVERRIDE='$MESA_GL_VERSION_OVERRIDE'"
-else
-    _mesa_gl_line="unset MESA_GL_VERSION_OVERRIDE 2>/dev/null; true"
-fi
-if [ -n "${MESA_LOADER_DRIVER_OVERRIDE:-}" ]; then
-    _mesa_loader_line="export MESA_LOADER_DRIVER_OVERRIDE='$MESA_LOADER_DRIVER_OVERRIDE'"
-else
-    _mesa_loader_line="unset MESA_LOADER_DRIVER_OVERRIDE 2>/dev/null; true"
-fi
-
-wine_cmd="
-    export DISPLAY='$DISPLAY'
-    export LIBVA_DRIVER_NAME='${LIBVA_DRIVER_NAME:-}'
-    export WINEPREFIX='$WINEPREFIX'
-    export WINEDEBUG='${WINEDEBUG:--all}'
-    export XDG_RUNTIME_DIR='/tmp/runtime-wineuser'
-    export ALSA_CONFIG_PATH='/tmp/runtime-wineuser/asoundrc'
-    export WINE_BIN='$WINE_BIN'
-    export WINESERVER_BIN='$WINESERVER_BIN'
-    export QUARK_EXTRA_ARGS='$QUARK_EXTRA_ARGS'
-    export WINEFSYNC='$WINEFSYNC'
-    export WINESYNC='$WINESYNC'
-    $_mesa_gl_line
-    $_mesa_loader_line
-    \"\$WINESERVER_BIN\" -k >/dev/null 2>&1 || true
-    cd '$(dirname "$EXE")'
-    if [ -n '$START_LNK' ]; then
-        \"\$WINE_BIN\" 'C:\\windows\\command\\start.exe' /Unix '$START_LNK' \
-            --no-sandbox \
-            --remote-debugging-port='9222' \
-            --remote-debugging-address=0.0.0.0 \
-            --remote-allow-origins='*' \
-            \$QUARK_EXTRA_ARGS
-        tail -f /dev/null
-    else
-        DATA_DIR=\"\$WINEPREFIX/drive_c/users/wineuser/AppData/Local/QuarkCloudDrive/User Data\"
-        rm -rf \"\$DATA_DIR/Snapshots\" \"\$DATA_DIR\"/Snapshots.CHROME_DELETE*
-        exec \"\$WINE_BIN\" '$(basename "$EXE")' \
-            --launch-from=startmenu \
-            --brand-clouddrive \
-            --remote-debugging-port='9222' \
-            --remote-debugging-address=0.0.0.0 \
-            --remote-allow-origins='*' \
-            \$QUARK_EXTRA_ARGS
-    fi
-"
-
-if [ "$(id -u)" = "0" ]; then
-    su -s /bin/bash wineuser -c "$wine_cmd"
-else
-    bash -lc "$wine_cmd"
-fi
-status=$?
-echo "=== Quark exited with status $status ==="
-echo "Keeping VNC alive for inspection (connect to :5900)."
-tail -f /dev/null
+export EXE
+export START_LNK
+export WINEPREFIX
+export WINEDEBUG
+export WINE_BIN
+export WINESERVER_BIN
+export QUARK_EXTRA_ARGS
+export WINEFSYNC
+export WINESYNC
+export LIBVA_DRIVER_NAME
+# Mesa env-vars: pass through; launch-quark.sh unsets them if empty.
+exec python3 /usr/local/bin/manager.py

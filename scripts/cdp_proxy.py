@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
 """CDP proxy for Quark/Wine compatibility.
 
-Listens on 0.0.0.0:PROXY_PORT, forwards to 127.0.0.1:QUARK_PORT.
+Listens on 0.0.0.0:proxy_port, forwards to 127.0.0.1:quark_port.
 Handles both HTTP (/json/*) and WebSocket on the same port.
 Rewrites WebSocket URLs in HTTP responses so clients connect through the proxy.
 Intercepts CDP commands unsupported by Wine/Electron and returns fake success.
 
-Usage: cdp-proxy.py [PROXY_PORT [QUARK_PORT]]
+Usage as a script:
+    cdp_proxy.py [PROXY_PORT [QUARK_PORT]]
+
+Usage as a library:
+    from cdp_proxy import run_server
+    server = await run_server(proxy_port=9223, quark_port=9222,
+                              on_activity=lambda: ...)
+    # ... later ...
+    server.close()
 """
 import asyncio
 import base64
@@ -18,8 +26,6 @@ import sys
 import urllib.request
 
 QUARK_HOST = "127.0.0.1"
-QUARK_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 9222
-PROXY_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 9223
 
 # Browser-level CDP commands not supported by Wine/Electron – return empty success.
 INTERCEPT = {
@@ -117,18 +123,18 @@ async def _read_http_headers(reader: asyncio.StreamReader):
     return path, headers
 
 
-def _fetch_json(path: str, rewrite_host: str) -> tuple:
+def _fetch_json(quark_port: int, path: str, rewrite_host: str) -> tuple:
     """Fetch /json/* from Quark, rewrite ws:// URLs to the client-facing host.
     Returns (body_bytes, content_type_str)."""
-    url = f"http://{QUARK_HOST}:{QUARK_PORT}{path}"
-    req = urllib.request.Request(url, headers={"Host": f"{QUARK_HOST}:{QUARK_PORT}"})
+    url = f"http://{QUARK_HOST}:{quark_port}{path}"
+    req = urllib.request.Request(url, headers={"Host": f"{QUARK_HOST}:{quark_port}"})
     with urllib.request.urlopen(req, timeout=5) as resp:
         content_type = resp.headers.get("Content-Type", "application/json")
         body = resp.read()
     # Rewrite the ws:// address to whatever host:port the client used so the
     # WebSocket URL stays routable from the client's perspective.
     body = body.replace(
-        f"ws://{QUARK_HOST}:{QUARK_PORT}".encode(),
+        f"ws://{QUARK_HOST}:{quark_port}".encode(),
         f"ws://{rewrite_host}".encode(),
     )
     return body, content_type
@@ -139,11 +145,13 @@ def _fetch_json(path: str, rewrite_host: str) -> tuple:
 async def _proxy_ws(
     client_r: asyncio.StreamReader,
     client_w: asyncio.StreamWriter,
+    quark_port: int,
     ws_path: str,
+    on_activity=None,
 ):
     """Bidirectional WS proxy between the Playwright client and Quark CDP."""
     try:
-        quark_r, quark_w = await asyncio.open_connection(QUARK_HOST, QUARK_PORT)
+        quark_r, quark_w = await asyncio.open_connection(QUARK_HOST, quark_port)
     except OSError:
         client_w.close()
         return
@@ -152,7 +160,7 @@ async def _proxy_ws(
     proxy_key = base64.b64encode(b"cdpproxy-key-1234").decode()
     quark_w.write((
         f"GET {ws_path} HTTP/1.1\r\n"
-        f"Host: {QUARK_HOST}:{QUARK_PORT}\r\n"
+        f"Host: {QUARK_HOST}:{quark_port}\r\n"
         "Upgrade: websocket\r\n"
         "Connection: Upgrade\r\n"
         f"Sec-WebSocket-Key: {proxy_key}\r\n"
@@ -181,11 +189,15 @@ async def _proxy_ws(
                             fake = json.dumps({"id": msg["id"], "result": {}})
                             client_w.write(_frame_server(fake))
                             await client_w.drain()
+                            if on_activity is not None:
+                                on_activity()
                             continue
                     except (json.JSONDecodeError, KeyError):
                         pass
                 quark_w.write(_frame_client(payload, opcode=opcode))
                 await quark_w.drain()
+                if on_activity is not None:
+                    on_activity()
         except EOFError:
             pass
         finally:
@@ -229,11 +241,20 @@ async def _proxy_ws(
 
 # ── Connection handler ─────────────────────────────────────────────────────────
 
-async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+async def _handle(
+    reader: asyncio.StreamReader,
+    writer: asyncio.StreamWriter,
+    quark_port: int,
+    proxy_port: int,
+    on_activity=None,
+):
     try:
         path, headers = await _read_http_headers(reader)
         if path is None:
             return
+
+        if on_activity is not None:
+            on_activity()
 
         if headers.get("upgrade", "").lower() == "websocket":
             # WebSocket handshake → proxy
@@ -245,13 +266,13 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
                 f"Sec-WebSocket-Accept: {_ws_accept(ws_key)}\r\n\r\n"
             ).encode())
             await writer.drain()
-            await _proxy_ws(reader, writer, path)
+            await _proxy_ws(reader, writer, quark_port, path, on_activity)
         else:
             # HTTP – proxy /json/* and rewrite URLs using the client's Host header
-            rewrite_host = headers.get("host", f"127.0.0.1:{PROXY_PORT}")
+            rewrite_host = headers.get("host", f"127.0.0.1:{proxy_port}")
             try:
                 body, content_type = await asyncio.get_event_loop().run_in_executor(
-                    None, _fetch_json, path, rewrite_host
+                    None, _fetch_json, quark_port, path, rewrite_host
                 )
                 writer.write((
                     "HTTP/1.1 200 OK\r\n"
@@ -274,14 +295,35 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
             pass
 
 
-async def main():
-    server = await asyncio.start_server(_handle, "0.0.0.0", PROXY_PORT)
+def make_handler(quark_port: int, proxy_port: int, on_activity=None):
+    """Build a `_handle` partial bound to the given ports and activity callback."""
+    return lambda r, w: _handle(r, w, quark_port, proxy_port, on_activity)
+
+
+async def run_server(proxy_port: int, quark_port: int, on_activity=None):
+    """Start the CDP proxy server. Returns the asyncio.Server for later teardown."""
+    loop = asyncio.get_event_loop()
+    server = await loop.create_server(
+        make_handler(quark_port, proxy_port, on_activity),
+        "0.0.0.0",
+        proxy_port,
+    )
     print(
-        f"[cdp-proxy] 0.0.0.0:{PROXY_PORT} → {QUARK_HOST}:{QUARK_PORT}",
+        f"[cdp-proxy] 0.0.0.0:{proxy_port} → {QUARK_HOST}:{quark_port}",
         flush=True,
     )
+    return server
+
+
+# ── Script entrypoint ─────────────────────────────────────────────────────────
+
+async def main(proxy_port: int, quark_port: int):
+    server = await run_server(proxy_port, quark_port)
     async with server:
         await server.serve_forever()
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    _proxy_port = int(sys.argv[1]) if len(sys.argv) > 1 else 9223
+    _quark_port = int(sys.argv[2]) if len(sys.argv) > 2 else 9222
+    asyncio.run(main(_proxy_port, _quark_port))
